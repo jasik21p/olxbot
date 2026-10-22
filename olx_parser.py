@@ -235,19 +235,24 @@ def parse_offer_dict(item: Dict[str, Any]) -> Optional[CarOffer]:
         logger.error(f"Error parsing offer {item.get('id')}: {e}", exc_info=True)
         return None
 
-async def fetch_offer_phones(session: aiohttp.ClientSession, offer_id: int, description: str) -> List[str]:
+async def fetch_offer_phones(session: Any, offer_id: int, description: str) -> List[str]:
     """Fetches phone numbers via OLX API endpoint with regex fallback on description."""
     phones = []
     url = OLX_PHONE_API_URL.format(offer_id=offer_id)
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                fetched = data.get("data", {}).get("phones", [])
-                for p in fetched:
-                    p_clean = str(p).strip()
-                    if p_clean and p_clean not in phones:
-                        phones.append(p_clean)
+        resp = await session.get(url, timeout=4)
+        status = getattr(resp, "status_code", getattr(resp, "status", None))
+        if status == 200:
+            res = resp.json()
+            if asyncio.iscoroutine(res):
+                data = await res
+            else:
+                data = res
+            fetched = data.get("data", {}).get("phones", [])
+            for p in fetched:
+                p_clean = str(p).strip()
+                if p_clean and p_clean not in phones:
+                    phones.append(p_clean)
     except Exception as e:
         logger.debug(f"Could not fetch phone from API for ad {offer_id}: {e}")
 

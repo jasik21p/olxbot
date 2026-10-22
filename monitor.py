@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 import aiohttp
+from curl_cffi.requests import AsyncSession
 from aiogram import Bot
 from aiogram.types import InputMediaPhoto
 from aiogram.exceptions import TelegramAPIError
@@ -115,30 +116,31 @@ class OlxMonitor:
         self.is_running = False
         self.start_time = datetime.now(timezone.utc)
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,uz;q=0.7"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,uz;q=0.7",
+            "Referer": "https://www.olx.uz/transport/legkovye-avtomobili/",
         }
 
-    async def initialize_baseline(self, session: aiohttp.ClientSession) -> None:
+    async def initialize_baseline(self, session: AsyncSession) -> None:
         """Loads latest ads on launch and marks them seen so no past ads are sent."""
         logger.info("Initializing baseline ads from OLX...")
         try:
-            async with session.get(OLX_API_URL, headers=self.headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    raw_items = data.get("data", [])
-                    baseline = []
-                    for item in raw_items:
-                        ad_id = int(item.get("id"))
-                        title = item.get("title", "")
-                        created_time = str(item.get("created_time") or "")
-                        baseline.append((ad_id, title, created_time))
-                    if baseline:
-                        await mark_multiple_ads_seen(baseline)
-                        logger.info(f"Baseline established with {len(baseline)} existing ads. Start time: {self.start_time.isoformat()}")
-                else:
-                    logger.warning(f"Failed to get baseline ads, status: {resp.status}")
+            resp = await session.get(OLX_API_URL, headers=self.headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_items = data.get("data", [])
+                baseline = []
+                for item in raw_items:
+                    ad_id = int(item.get("id"))
+                    title = item.get("title", "")
+                    created_time = str(item.get("created_time") or "")
+                    baseline.append((ad_id, title, created_time))
+                if baseline:
+                    await mark_multiple_ads_seen(baseline)
+                    logger.info(f"Baseline established with {len(baseline)} existing ads. Start time: {self.start_time.isoformat()}")
+            else:
+                logger.warning(f"Failed to get baseline ads, status: {resp.status_code}")
         except Exception as e:
             logger.error(f"Error fetching baseline ads: {e}")
 
@@ -149,65 +151,62 @@ class OlxMonitor:
         init_interval = await get_poll_interval()
         logger.info(f"Starting OLX car monitor (Initial polling interval: {init_interval}s)...")
 
-        timeout = aiohttp.ClientTimeout(total=6)
-        connector = aiohttp.TCPConnector(limit=10, ssl=False)
-
-        async with aiohttp.ClientSession(headers=self.headers, timeout=timeout, connector=connector) as session:
+        async with AsyncSession(impersonate="chrome124") as session:
             await self.initialize_baseline(session)
 
             consecutive_errors = 0
 
             while self.is_running:
                 try:
-                    async with session.get(OLX_API_URL) as resp:
-                        if resp.status == 200:
-                            consecutive_errors = 0
-                            data = await resp.json()
-                            raw_offers = data.get("data", [])
+                    resp = await session.get(OLX_API_URL, headers=self.headers, timeout=10)
+                    if resp.status_code == 200:
+                        consecutive_errors = 0
+                        data = resp.json()
+                        raw_offers = data.get("data", [])
 
-                            unseen_offers = []
-                            for raw in raw_offers:
-                                ad_id = int(raw.get("id"))
-                                if not await is_ad_seen(ad_id):
-                                    unseen_offers.append(raw)
+                        unseen_offers = []
+                        for raw in raw_offers:
+                            ad_id = int(raw.get("id"))
+                            if not await is_ad_seen(ad_id):
+                                unseen_offers.append(raw)
 
-                            if unseen_offers:
-                                for raw in reversed(unseen_offers):
-                                    offer = parse_offer_dict(raw)
-                                    if not offer:
+                        if unseen_offers:
+                            for raw in reversed(unseen_offers):
+                                offer = parse_offer_dict(raw)
+                                if not offer:
+                                    continue
+
+                                await mark_ad_seen(offer.id, offer.title, offer.created_time)
+
+                                # Filter out ads created before bot started
+                                if offer.created_dt:
+                                    if offer.created_dt < (self.start_time - timedelta(minutes=1)):
+                                        logger.info(
+                                            f"Discarding old/TOP ad {offer.id} ('{offer.title[:30]}') "
+                                            f"created at {offer.created_time}"
+                                        )
                                         continue
+                                else:
+                                    continue
 
-                                    await mark_ad_seen(offer.id, offer.title, offer.created_time)
+                                logger.info(f"⚡️ New genuine car published on OLX.uz: {offer.title} (ID: {offer.id})")
 
-                                    # Filter out ads created before bot started
-                                    if offer.created_dt:
-                                        if offer.created_dt < (self.start_time - timedelta(minutes=1)):
-                                            logger.info(
-                                                f"Discarding old/TOP ad {offer.id} ('{offer.title[:30]}') "
-                                                f"created at {offer.created_time}"
-                                            )
-                                            continue
-                                    else:
-                                        continue
+                                offer.phones = await fetch_offer_phones(session, offer.id, offer.description)
 
-                                    logger.info(f"⚡️ New genuine car published on OLX.uz: {offer.title} (ID: {offer.id})")
+                                active_users = await get_active_authorized_users()
+                                for user in active_users:
+                                    if offer.matches_filters(user):
+                                        u_lang = user.get("language", "ru")
+                                        asyncio.create_task(send_ad_notification(self.bot, user["user_id"], offer, lang=u_lang))
+                                        await asyncio.sleep(0.04)
 
-                                    offer.phones = await fetch_offer_phones(session, offer.id, offer.description)
-
-                                    active_users = await get_active_authorized_users()
-                                    for user in active_users:
-                                        if offer.matches_filters(user):
-                                            u_lang = user.get("language", "ru")
-                                            asyncio.create_task(send_ad_notification(self.bot, user["user_id"], offer, lang=u_lang))
-                                            await asyncio.sleep(0.04)
-
-                        elif resp.status == 429:
-                            consecutive_errors += 1
-                            backoff = min(15, consecutive_errors * 3)
-                            logger.warning(f"OLX rate limit (429). Backing off for {backoff}s...")
-                            await asyncio.sleep(backoff)
-                        else:
-                            logger.warning(f"OLX API returned status {resp.status}")
+                    elif resp.status_code == 429:
+                        consecutive_errors += 1
+                        backoff = min(15, consecutive_errors * 3)
+                        logger.warning(f"OLX rate limit (429). Backing off for {backoff}s...")
+                        await asyncio.sleep(backoff)
+                    else:
+                        logger.warning(f"OLX API returned status {resp.status_code}")
 
                 except asyncio.CancelledError:
                     logger.info("Monitor task cancelled.")
