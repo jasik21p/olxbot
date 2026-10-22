@@ -1,0 +1,18 @@
+[Unit]
+Description=OLX.uz Car Monitor Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+# Укажите пользователя (обычно root или имя пользователя в ISPmanager)
+User=root
+# Укажите путь к папке бота на сервере
+WorkingDirectory=/var/www/olx_car_monitor_bot
+# Укажите путь к python внутри виртуального окружения
+ExecStart=/var/www/olx_car_monitor_bot/venv/bin/python bot.py
+Restart=always
+RestartSec=3
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
