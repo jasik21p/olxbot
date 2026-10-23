@@ -282,20 +282,36 @@ def get_ad_inline_keyboard(url: str, lang: str = "ru") -> InlineKeyboardMarkup:
 
 # ==================== ADMIN KEYBOARDS ====================
 
-def get_admin_panel_keyboard(is_super: bool = False, current_interval: float = 1.0) -> InlineKeyboardMarkup:
+def get_admin_panel_keyboard(is_super: bool = False, current_interval: float = 1.0, lang: str = "ru") -> InlineKeyboardMarkup:
     """Admin quick management actions."""
+    interval_label = f"⏱ Частота обновлений: {current_interval:.1f}с" if lang != "uz" else f"⏱ Yangilanish tezligi: {current_interval:.1f}s"
+    pw_label = "🔑 Сменить пароль бота" if lang != "uz" else "🔑 Bot parolini o'zgartirish"
+    ping_label = "📡 Проверить пинг (OLX и Сервер)" if lang != "uz" else "📡 Tarmoq pingi (OLX va Server)"
+    admins_label = "👥 Управление администраторами" if lang != "uz" else "👥 Administratorlarni boshqarish"
+    refresh_label = "📊 Обновить статистику" if lang != "uz" else "📊 Statistikani yangilash"
+    close_label = "❌ Закрыть" if lang != "uz" else "❌ Yopish"
+
     buttons = [
-        [InlineKeyboardButton(text=f"⏱ Частота обновлений: {current_interval:.1f}с", callback_data="admin_open_interval")],
-        [InlineKeyboardButton(text="🔑 Сменить пароль бота", callback_data="admin_change_pw")]
+        [InlineKeyboardButton(text=interval_label, callback_data="admin_open_interval")],
+        [InlineKeyboardButton(text=pw_label, callback_data="admin_change_pw")],
+        [InlineKeyboardButton(text=ping_label, callback_data="admin_check_ping")]
     ]
     if is_super:
-        buttons.append([InlineKeyboardButton(text="👥 Управление администраторами", callback_data="admin_manage_admins")])
+        buttons.append([InlineKeyboardButton(text=admins_label, callback_data="admin_manage_admins")])
 
     buttons.append([
-        InlineKeyboardButton(text="📊 Обновить статистику", callback_data="admin_refresh_stats"),
-        InlineKeyboardButton(text="❌ Закрыть", callback_data="close_admin")
+        InlineKeyboardButton(text=refresh_label, callback_data="admin_refresh_stats"),
+        InlineKeyboardButton(text=close_label, callback_data="close_admin")
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_ping_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    refresh_btn = "🔄 Yangilash" if lang == "uz" else "🔄 Повторить замер"
+    back_btn = "⬅️ Admin paneli" if lang == "uz" else "⬅️ В админ-панель"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=refresh_btn, callback_data="admin_check_ping")],
+        [InlineKeyboardButton(text=back_btn, callback_data="admin_panel_main")]
+    ])
 
 def get_poll_interval_keyboard(current_interval: float) -> InlineKeyboardMarkup:
     """Presets for update frequency."""
