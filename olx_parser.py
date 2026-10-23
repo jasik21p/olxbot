@@ -260,8 +260,8 @@ async def fetch_offer_phones(session: Any, offer_id: int, description: str) -> L
     if not phones and description:
         matches = PHONE_REGEX.findall(description)
         for m in matches:
-            cleaned = re.sub(r'[\s.-]', '', m)
-            if 7 <= len(cleaned) <= 12 and cleaned not in phones:
+            digits_only = re.sub(r'\D', '', m)
+            if 7 <= len(digits_only) <= 12 and m.strip() not in phones:
                 phones.append(m.strip())
 
     return phones
